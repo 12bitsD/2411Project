@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 import sqlite3
+import pandas as pd
 
 class MainWindow(tk.Tk):
     def __init__(self):
@@ -35,6 +36,12 @@ class MainWindow(tk.Tk):
         register_menu.add_command(label='Manage Registrations', command=self.open_register_manager)
         menu_bar.add_cascade(label='Registration Management', menu=register_menu)
 
+        report_menu = tk.Menu(menu_bar, tearoff=0)
+        report_menu.add_command(label='Registration Status Report', command=self.generate_registration_report)
+        report_menu.add_command(label='Popular Meals Report', command=self.generate_popular_meals_report)
+        report_menu.add_command(label='Attendance Behavior Report', command=self.generate_attendance_behavior_report)
+        menu_bar.add_cascade(label='Reports', menu=report_menu)
+
     def open_banquet_manager(self):
         BanquetManager(self)
 
@@ -47,14 +54,92 @@ class MainWindow(tk.Tk):
     def open_register_manager(self):
         RegisterManager(self)
 
+    def generate_registration_report(self):
+        conn = sqlite3.connect('banquet.db')
+        cursor = conn.cursor()
+    
+    # 查询数据
+        cursor.execute("""
+            SELECT Banquet.Name, COUNT(Registrations.RegistrationID) AS RegistrationCount
+            FROM Banquet
+            LEFT JOIN Registrations ON Banquet.BIN = Registrations.BIN
+            GROUP BY Banquet.BIN;
+            """)
+        data = cursor.fetchall()
+    
+        columns = [desc[0] for desc in cursor.description]
+        report_data = [dict(zip(columns, row)) for row in data]
+        
+        ReportWindow(self, report_data, 'Registration Status Report')
+        
+        conn.close()
+
+    def generate_popular_meals_report(self):
+        conn = sqlite3.connect('banquet.db')
+        cursor = conn.cursor()
+    
+    # 查询数据
+        cursor.execute("""
+            SELECT Banquet.Name, Meal.DishName, Count
+            FROM (
+                SELECT Banquet.Name, Meal.DishName, COUNT(Registrations.RegistrationID) AS Count,
+                       ROW_NUMBER() OVER (PARTITION BY Banquet.BIN ORDER BY COUNT(Registrations.RegistrationID) DESC) AS rn
+                FROM Banquet
+                JOIN Registrations ON Banquet.BIN = Registrations.BIN
+                JOIN Meal ON Registrations.MealChoice = Meal.MealID
+                GROUP BY Banquet.BIN, Meal.DishName
+            ) sub
+            WHERE sub.rn = 1;
+        """)
+        data = cursor.fetchall()
+    
+        columns = [desc[0] for desc in cursor.description]
+        report_data = [dict(zip(columns, row)) for row in data]
+    
+        ReportWindow(self, report_data, 'Popular Meals Report')
+    
+        conn.close()
+
+    def generate_attendance_behavior_report(self):
+        conn = sqlite3.connect('banquet.db')
+        cursor = conn.cursor()
+    
+    # 查询数据
+        cursor.execute("""
+            SELECT attendees_account.FirstName, attendees_account.LastName, COUNT(CASE WHEN Registrations.AttendanceStatus = 'Y' THEN 1 END) AS AttendanceCount
+            FROM attendees_account
+            LEFT JOIN Registrations ON attendees_account.AccountID = Registrations.AccountID
+            GROUP BY attendees_account.AccountID;
+        """)
+        data = cursor.fetchall()
+    
+        columns = [desc[0] for desc in cursor.description]
+        report_data = [dict(zip(columns, row)) for row in data]
+    
+        ReportWindow(self, report_data, 'Attendance Behavior Report')
+       
+        conn.close()
+
 class BanquetManager(ttk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title('Banquet Manager')
         self.geometry('600x400')
 
-        # Create Treeview with scrollbars
-        self.tree = ttk.Treeview(self, columns=('BIN', 'Name', 'DateTime', 'Address', 'Location', 'ContactFirstName', 'ContactLastName', 'Available', 'Quota'), show='headings')
+        #  grid 
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky='nsew')
+
+        # 在MainFrame中设置行和列的权重
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # 创建 Treeview 和垂直滚动条
+        self.tree = ttk.Treeview(main_frame, columns=('BIN', 'Name', 'DateTime', 'Address', 'Location', 'ContactFirstName', 'ContactLastName', 'Available', 'Quota'), show='headings')
         self.tree.heading('BIN', text='BIN')
         self.tree.heading('Name', text='Name')
         self.tree.heading('DateTime', text='Date Time')
@@ -64,20 +149,26 @@ class BanquetManager(ttk.Toplevel):
         self.tree.heading('ContactLastName', text='Contact Last Name')
         self.tree.heading('Available', text='Available')
         self.tree.heading('Quota', text='Quota')
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky='nsew')
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
+        vsb.grid(row=0, column=1, sticky='ns')
         self.tree.configure(yscrollcommand=vsb.set)
 
-        # Create buttons frame
-        button_frame = ttk.Frame(self)
-        button_frame.pack(side=tk.BOTTOM, pady=10)
+        # 添加水平滚动条
+        hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=self.tree.xview)
+        hsb.grid(row=1, column=0, sticky='ew')
+        self.tree.configure(xscrollcommand=hsb.set)
+
+        # 创建按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10, sticky='e')
+
         ttk.Button(button_frame, text='Add', command=self.add_banquet).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Edit', command=self.edit_banquet).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Delete', command=self.delete_banquet).pack(side=tk.LEFT, padx=5)
 
-        # Load data
+        # 加载数据
         self.load_data()
 
     def load_data(self):
@@ -267,28 +358,45 @@ class MealManager(ttk.Toplevel):
         self.title('Meal Manager')
         self.geometry('600x400')
 
-        # Create Treeview with scrollbars
-        self.tree = ttk.Treeview(self, columns=('MealID', 'BIN', 'Type', 'DishName', 'Price', 'SpecialCuisine'), show='headings')
+        # 使用 grid 布局
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # 创建主框架
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky='nsew')
+
+        # 在主框架中设置行和列的权重
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # 创建 Treeview 和垂直滚动条
+        self.tree = ttk.Treeview(main_frame, columns=('MealID', 'BIN', 'Type', 'DishName', 'Price', 'SpecialCuisine'), show='headings')
         self.tree.heading('MealID', text='MealID')
         self.tree.heading('BIN', text='BIN')
         self.tree.heading('Type', text='Type')
         self.tree.heading('DishName', text='Dish Name')
         self.tree.heading('Price', text='Price')
         self.tree.heading('SpecialCuisine', text='Special Cuisine')
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky='nsew')
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
+        vsb.grid(row=0, column=1, sticky='ns')
         self.tree.configure(yscrollcommand=vsb.set)
 
-        # Create buttons frame
-        button_frame = ttk.Frame(self)
-        button_frame.pack(side=tk.BOTTOM, pady=10)
+        # 添加水平滚动条
+        hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=self.tree.xview)
+        hsb.grid(row=1, column=0, sticky='ew')
+        self.tree.configure(xscrollcommand=hsb.set)
+
+        # 创建按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10, sticky='e')
         ttk.Button(button_frame, text='Add', command=self.add_meal).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Edit', command=self.edit_meal).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Delete', command=self.delete_meal).pack(side=tk.LEFT, padx=5)
 
-        # Load data
+        # 加载数据
         self.load_data()
 
     def load_data(self):
@@ -452,8 +560,20 @@ class AttendeeManager(ttk.Toplevel):
         self.title('Attendee Manager')
         self.geometry('800x400')
 
+        # Use grid layout for the main window
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # Create a main frame
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky='nsew')
+
+        # Configure rows and columns in the main frame
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
         # Create Treeview with scrollbars
-        self.tree = ttk.Treeview(self, columns=('AccountID', 'FirstName', 'LastName', 'Address', 'AttendeeType', 'Password', 'MobileNumber', 'AffiliatedOrganization'), show='headings')
+        self.tree = ttk.Treeview(main_frame, columns=('AccountID', 'FirstName', 'LastName', 'Address', 'AttendeeType', 'Password', 'MobileNumber', 'AffiliatedOrganization'), show='headings')
         self.tree.heading('AccountID', text='Account ID')
         self.tree.heading('FirstName', text='First Name')
         self.tree.heading('LastName', text='Last Name')
@@ -462,15 +582,19 @@ class AttendeeManager(ttk.Toplevel):
         self.tree.heading('Password', text='Password')
         self.tree.heading('MobileNumber', text='Mobile Number')
         self.tree.heading('AffiliatedOrganization', text='Affiliated Organization')
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky='nsew')
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
+        vsb.grid(row=0, column=1, sticky='ns')
         self.tree.configure(yscrollcommand=vsb.set)
 
+        hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=self.tree.xview)
+        hsb.grid(row=1, column=0, sticky='ew')
+        self.tree.configure(xscrollcommand=hsb.set)
+
         # Create buttons frame
-        button_frame = ttk.Frame(self)
-        button_frame.pack(side=tk.BOTTOM, pady=10)
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10, sticky='e')
         ttk.Button(button_frame, text='Add', command=self.add_attendee).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Edit', command=self.edit_attendee).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Delete', command=self.delete_attendee).pack(side=tk.LEFT, padx=5)
@@ -665,8 +789,20 @@ class RegisterManager(ttk.Toplevel):
         self.title('Registration Manager')
         self.geometry('600x400')
 
-        # Create Treeview with scrollbars
-        self.tree = ttk.Treeview(self, columns=('RegistrationID', 'AccountID', 'BIN', 'RegistrationDate', 'DrinkChoice', 'MealChoice', 'Remarks', 'SeatNumber'), show='headings')
+        # 使用 grid 布局
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # 创建主框架
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky='nsew')
+
+        # 在主框架中设置行和列的权重
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # 创建 Treeview 和垂直滚动条
+        self.tree = ttk.Treeview(main_frame, columns=('RegistrationID', 'AccountID', 'BIN', 'RegistrationDate', 'DrinkChoice', 'MealChoice', 'Remarks', 'SeatNumber'), show='headings')
         self.tree.heading('RegistrationID', text='Registration ID')
         self.tree.heading('AccountID', text='Account ID')
         self.tree.heading('BIN', text='BIN')
@@ -675,19 +811,24 @@ class RegisterManager(ttk.Toplevel):
         self.tree.heading('MealChoice', text='Meal Choice')
         self.tree.heading('Remarks', text='Remarks')
         self.tree.heading('SeatNumber', text='Seat Number')
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky='nsew')
 
-        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb = ttk.Scrollbar(main_frame, orient="vertical", command=self.tree.yview)
+        vsb.grid(row=0, column=1, sticky='ns')
         self.tree.configure(yscrollcommand=vsb.set)
 
-        # Create buttons frame
-        button_frame = ttk.Frame(self)
-        button_frame.pack(side=tk.BOTTOM, pady=10)
+        # 添加水平滚动条
+        hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=self.tree.xview)
+        hsb.grid(row=1, column=0, sticky='ew')
+        self.tree.configure(xscrollcommand=hsb.set)
+
+        # 创建按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10, sticky='e')
         ttk.Button(button_frame, text='Add', command=self.add_register).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text='Delete', command=self.delete_register).pack(side=tk.LEFT, padx=5)
 
-        # Load data
+        # 加载数据
         self.load_data()
 
     def load_data(self):
@@ -784,7 +925,66 @@ class AddRegisterWindow(ttk.Toplevel):
 
         self.destroy()
         self.master.load_data()
+class ReportWindow(tk.Toplevel):
+    def __init__(self, parent, report_data, report_title):
+        super().__init__(parent)
+        self.title(report_title)
+        
+        # 创建菜单栏
+        menu = tk.Menu(self)
+        self.config(menu=menu)
+        file_menu = tk.Menu(menu, tearoff=0)
+        menu.add_cascade(label='File', menu=file_menu)
+        file_menu.add_command(label='Export to Excel', command=self.export_to_excel)
+        file_menu.add_command(label='Export to PDF', command=self.export_to_pdf)
+        
+        # 创建Treeview来显示数据
+        self.tree = ttk.Treeview(self, columns=tuple(report_data[0].keys()), show='headings')
+        for col in report_data[0].keys():
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100)
+        for row in report_data:
+            self.tree.insert('', 'end', values=tuple(row.values()))
+        self.tree.pack(expand=True, fill='both')
+        
+        # 保存数据以便导出
+        self.data = report_data
+
+    def export_to_excel(self):
+        df = pd.DataFrame(self.data)
+        file_path = filedialog.asksaveasfilename(defaultextension='.xlsx', filetypes=[('Excel files', '*.xlsx')])
+        if file_path:
+            df.to_excel(file_path, index=False)
+
+    def export_to_pdf(self):
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+        from reportlab.lib import colors
+
+        file_path = filedialog.asksaveasfilename(defaultextension='.pdf', filetypes=[('PDF files', '*.pdf')])
+        if not file_path:
+            return
+
+        data = [tuple(self.data[0].keys())] + [tuple(row.values()) for row in self.data]
+        pdf = SimpleDocTemplate(file_path, pagesize=letter)
+        table = Table(data)
+
+        # 设置表格样式
+        style = TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+        ])
+        table.setStyle(style)
+
+        # 添加表格到PDF
+        pdf.build([table])
 
 if __name__ == '__main__':
+    conn = sqlite3.connect('banquet.db')
+    print ("数据库打开成功")
     app = MainWindow()
     app.mainloop()
