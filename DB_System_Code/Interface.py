@@ -29,6 +29,7 @@ class MainWindow(tk.Tk):
         # Create attendee management menu
         attendee_menu = tk.Menu(menu_bar, tearoff=0)
         attendee_menu.add_command(label='Manage Attendees', command=self.open_attendee_manager)
+        attendee_menu.add_command(label='Search Registrations', command=self.open_search_registrations)
         menu_bar.add_cascade(label='Attendee Management', menu=attendee_menu)
 
         # Create reports menu
@@ -46,6 +47,9 @@ class MainWindow(tk.Tk):
 
     def open_attendee_manager(self):
         AttendeeManager(self)
+
+    def open_search_registrations(self):
+        SearchRegistrationsWindow(self)
 
     def generate_registration_report(self):
         conn = sqlite3.connect('banquet.db')
@@ -884,6 +888,135 @@ class EditAttendeeWindow(ttk.Toplevel):
 
         self.destroy()
         self.master.load_data()
+
+class SearchRegistrationsWindow(ttk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title('Search Registrations')
+        self.geometry('800x600')
+
+        ttk.Label(self, text='Search Criteria:').grid(row=0, column=0, padx=10, pady=10, sticky='w')
+
+        ttk.Label(self, text='Date:').grid(row=1, column=0, padx=10, pady=5, sticky='e')
+        self.date_entry = ttk.Entry(self)
+        self.date_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        ttk.Label(self, text='Banquet Name:').grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        self.banquet_name_entry = ttk.Entry(self)
+        self.banquet_name_entry.grid(row=2, column=1, padx=10, pady=5)
+
+        ttk.Label(self, text='Attendee Type:').grid(row=3, column=0, padx=10, pady=5, sticky='e')
+        self.attendee_type_entry = ttk.Entry(self)
+        self.attendee_type_entry.grid(row=3, column=1, padx=10, pady=5)
+
+        ttk.Button(self, text='Search', command=self.search).grid(row=4, column=1, padx=10, pady=10)
+
+        self.tree = ttk.Treeview(self, columns=('AccountID', 'BIN', 'Name', 'FirstName', 'LastName', 'AttendeeType', 'MealChoice'), show='headings')
+        self.tree.heading('AccountID', text='Account ID')
+        self.tree.heading('BIN', text='BIN')
+        self.tree.heading('Name', text='Banquet Name')
+        self.tree.heading('FirstName', text='First Name')
+        self.tree.heading('LastName', text='Last Name')
+        self.tree.heading('AttendeeType', text='Attendee Type')
+        self.tree.heading('MealChoice', text='Meal Choice')
+        self.tree.grid(row=5, column=0, columnspan=2, padx=10, pady=10, sticky='nsew')
+
+        ttk.Button(self, text='Update', command=self.update_registration).grid(row=6, column=1, padx=10, pady=10)
+
+    def search(self):
+        self.tree.delete(*self.tree.get_children())
+        date = self.date_entry.get()
+        banquet_name = self.banquet_name_entry.get()
+        attendee_type = self.attendee_type_entry.get()
+
+        query = '''
+            SELECT AttendeesAccount.AccountID, AttendeesAccount.BIN, Banquet.Name, AttendeesAccount.FirstName, AttendeesAccount.LastName, AttendeesAccount.AttendeeType, AttendeesAccount.MealChoice
+            FROM AttendeesAccount
+            JOIN Banquet ON AttendeesAccount.BIN = Banquet.BIN
+            WHERE 1=1
+        '''
+        params = []
+        if date:
+            query += ' AND AttendeesAccount.DateTime = ? '
+            params.append(date)
+        if banquet_name:
+            query += ' AND Banquet.Name LIKE ? '
+            params.append(f'%{banquet_name}%')
+        if attendee_type:
+            query += ' AND AttendeesAccount.AttendeeType = ? '
+            params.append(attendee_type)
+
+        conn = sqlite3.connect('banquet.db')
+        c = conn.cursor()
+        c.execute(query, tuple(params))
+        rows = c.fetchall()
+        conn.close()
+
+        for row in rows:
+            self.tree.insert('', 'end', values=row)
+
+    def update_registration(self):
+        selected_item = self.tree.selection()
+        if not selected_item:
+            messagebox.showerror('Error', 'Please select a registration to update.')
+            return
+        accountid = self.tree.item(selected_item)['values'][0]
+        UpdateRegistrationWindow(self, accountid)
+
+class UpdateRegistrationWindow(ttk.Toplevel):
+    def __init__(self, parent, accountid):
+        super().__init__(parent)
+        self.title('Update Registration')
+        self.geometry('400x300')
+        self.accountid = accountid
+
+        conn = sqlite3.connect('banquet.db')
+        c = conn.cursor()
+        c.execute('SELECT * FROM AttendeesAccount WHERE AccountID = ?', (accountid,))
+        row = c.fetchone()
+        conn.close()
+
+        ttk.Label(self, text='First Name:').grid(row=0, column=0, padx=10, pady=5, sticky='e')
+        self.firstname_entry = ttk.Entry(self)
+        self.firstname_entry.grid(row=0, column=1, padx=10, pady=5)
+        self.firstname_entry.insert(0, row[2])
+
+        ttk.Label(self, text='Last Name:').grid(row=1, column=0, padx=10, pady=5, sticky='e')
+        self.lastname_entry = ttk.Entry(self)
+        self.lastname_entry.grid(row=1, column=1, padx=10, pady=5)
+        self.lastname_entry.insert(0, row[3])
+
+        ttk.Label(self, text='Attendee Type:').grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        self.attendee_type_entry = ttk.Entry(self)
+        self.attendee_type_entry.grid(row=2, column=1, padx=10, pady=5)
+        self.attendee_type_entry.insert(0, row[5])
+
+        ttk.Label(self, text='Meal Choice:').grid(row=3, column=0, padx=10, pady=5, sticky='e')
+        self.meal_choice_entry = ttk.Entry(self)
+        self.meal_choice_entry.grid(row=3, column=1, padx=10, pady=5)
+        self.meal_choice_entry.insert(0, row[10] if row[10] else '')
+
+        ttk.Button(self, text='Save Changes', command=self.save).grid(row=4, column=1, padx=10, pady=10)
+
+    def save(self):
+        firstname = self.firstname_entry.get()
+        lastname = self.lastname_entry.get()
+        attendee_type = self.attendee_type_entry.get()
+        meal_choice = self.meal_choice_entry.get()
+
+        conn = sqlite3.connect('banquet.db')
+        c = conn.cursor()
+        c.execute('''
+            UPDATE AttendeesAccount SET
+                FirstName = ?, LastName = ?, AttendeeType = ?, MealChoice = ?
+            WHERE AccountID = ?
+        ''', (firstname, lastname, attendee_type, meal_choice, self.accountid))
+        conn.commit()
+        conn.close()
+
+        messagebox.showinfo('Success', 'Registration updated successfully.')
+        self.destroy()
+        self.master.search()
 
 class ReportWindow(tk.Toplevel):
     def __init__(self, parent, report_data, report_title):
